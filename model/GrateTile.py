@@ -94,4 +94,26 @@ class FetchCalculator(object):
             boolean_mask.append(mask)
         return block_id,boolean_mask
 
+
+class CacheLineCalculator(object):
+    def __init__(self, indicators, bit_maps):
+        self.indicators = indicators
+        self.bit_maps = bit_maps
     
+    def Fetch(self, block_id, boolean_mask):
+        num_cache_line = 0
+        for i, block_id_ in enumerate(block_id):
+            idx, idy, idc = block_id_[0]*2 , block_id_[1]*2, block_id_[2]
+            # print(idx, idy, idc)
+            mask = boolean_mask[i]
+            num_cache_line += math.ceil(self.indicators[idc][idy][idx]/8) if mask[0] else 0
+            num_cache_line += math.ceil(self.indicators[idc][idy][idx+1]/8) if mask[1] else 0
+            num_cache_line += math.ceil(self.indicators[idc][idy+1][idx]/8) if mask[2] else 0
+            num_cache_line += math.ceil(self.indicators[idc][idy+1][idx+1]/8) if mask[3] else 0
+
+            num_cache_line += math.ceil((self.bit_maps[idc][idy][idx]/16/8).reshape(-1).shape[0]) if mask[0] else 0
+            num_cache_line += math.ceil((self.bit_maps[idc][idy][idx+1]/16/8).reshape(-1).shape[0]) if mask[1] else 0
+            num_cache_line += math.ceil((self.bit_maps[idc][idy+1][idx]/16/8).reshape(-1).shape[0]) if mask[2] else 0
+            num_cache_line += math.ceil((self.bit_maps[idc][idy+1][idx+1]/16/8).reshape(-1).shape[0]) if mask[3] else 0  
+
+        return num_cache_line          
