@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python3
 from network.alexnet import alexnet
 import numpy as np
 import torchvision
