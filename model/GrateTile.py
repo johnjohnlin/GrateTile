@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import newaxis
-import math 
+import math
 
 class FetchCalculator(object):
     def __init__(self, xsplit, ysplit, csplit):
@@ -43,7 +43,7 @@ class FetchCalculator(object):
         mask_col = np.bitwise_and(mask_col_u, mask_col_d)[:,newaxis]
 
         return np.bitwise_and(mask_col, mask_row)
-    
+
     def Fetch(self, head, tile_size):
         # For example, when xsplit=(3,2), ysplit=(2,1)
         # head = (0,0,0), tile_size=(6,5,8)
@@ -96,7 +96,7 @@ class CacheLineCalculator(object):
     def __init__(self, indicators, bit_maps):
         self.indicators = indicators
         self.bit_maps = bit_maps
-    
+
     def Fetch(self, block_id, boolean_mask):
         num_cache_line = 0
         for i, block_id_ in enumerate(block_id):
@@ -111,6 +111,6 @@ class CacheLineCalculator(object):
             num_cache_line += math.ceil((self.bit_maps[idc][idy][idx]/16/8).reshape(-1).shape[0]) if mask[0] else 0
             num_cache_line += math.ceil((self.bit_maps[idc][idy][idx+1]/16/8).reshape(-1).shape[0]) if mask[1] else 0
             num_cache_line += math.ceil((self.bit_maps[idc][idy+1][idx]/16/8).reshape(-1).shape[0]) if mask[2] else 0
-            num_cache_line += math.ceil((self.bit_maps[idc][idy+1][idx+1]/16/8).reshape(-1).shape[0]) if mask[3] else 0  
+            num_cache_line += math.ceil((self.bit_maps[idc][idy+1][idx+1]/16/8).reshape(-1).shape[0]) if mask[3] else 0
 
         return num_cache_line
