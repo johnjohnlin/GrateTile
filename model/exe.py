@@ -17,7 +17,7 @@ def get_para(ks_list,idx,h,w):
     w_n = 8*math.ceil((w+2*p)/8.)
     h_n = 8*math.ceil((h+2*p)/8.)
 
-    return a, b, w_n, h_n, p 
+    return a, b, w_n, h_n, p
 
 
 if __name__ == '__main__':
@@ -39,7 +39,9 @@ if __name__ == '__main__':
             while idy+a+b <= h_n:
                 idx  = 0
                 while idx+a+b <= w_n:
-                    xyc, bmask = fc.Fetch((idx,idy,idc), (min(idx+a+b*2,w_n), min(idy+a+b*2,h_n), idc+8))
+                    head = (idx,idy,idc)
+                    tile_size = (min(idx+a+b*2,w_n)-idx, min(idy+a+b*2,h_n)-idy, 8)
+                    xyc, bmask = fc.Fetch(head, tile_size)
                     print('channel',(idx,idy,idc), (min(idx+a+b*2,w_n), min(idy+a+b*2,h_n), idc+8))
                     print(xyc)
                     print(bmask)
@@ -48,6 +50,5 @@ if __name__ == '__main__':
                 idy += a+b
             idc += a+b
         print('-------------------------------------------------------------------',amount,'-------------------------------------------------------------------')
-        
-    
-            
+
+

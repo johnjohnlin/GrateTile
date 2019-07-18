@@ -12,15 +12,16 @@ from tqdm import tqdm
 import math
 import argparse
 import matplotlib.pyplot as plt
-from model.GrateTile import * 
+from model.GrateTile import *
 ## hyper parameter
 cuda = True
 BATCH_SIZE = 1
 parser = argparse.ArgumentParser(description='Integrate tiling')
-parser.add_argument('--tiling_mode', action='store_true', help='type foe True for tiling')
-parser.add_argument('--calcu_sparsity', action='store_true', help='type foe True for calculate sparsity')
+parser.add_argument('--tiling_mode',          action='store_true', help='type foe True for tiling')
+parser.add_argument('--calcu_sparsity',       action='store_true', help='type foe True for calculate sparsity')
 parser.add_argument('--layer', default=0, type=int, help='the layer')
 args = parser.parse_args()
+
 def AddressPatten2CacheLineNum(indicators, bit_maps, i):
     clc = CacheLineCalculator(indicators, bit_maps)
     fmap_cache_lines = 0
@@ -30,14 +31,16 @@ def AddressPatten2CacheLineNum(indicators, bit_maps, i):
     hwc = hwc_list[i]
     a, b, w_new, h_new, padding = ParameterGet(kernel_stride_padding,i,hwc[0],hwc[1])
     #print(a, b, w_new,h_new)
-    fc = FetchCalculator((b,a), (b,a), hwc[2])
+    fc = FetchCalculator((b,a), (b,a), 8)
     idc = 0
     while idc+8 <= hwc[2]:
         idy = 0
         while idy+a+b <= h_new:
             idx  = 0
             while idx+a+b <= w_new:
-                xyc, bmask = fc.Fetch((idx,idy,idc), (min(idx+a+b*2,w_new), min(idy+a+b*2,h_new), idc+8))
+                head = (idx,idy,idc)
+                tile_size = (min(idx+a+b*2,w_new)-idx, min(idy+a+b*2,h_new)-idy, 8)
+                xyc, bmask = fc.Fetch(head, tile_size)
                 cache_line, cache_line_bm = clc.Fetch(xyc, bmask)
                 fmap_cache_lines += cache_line
                 bmap_cache_lines += cache_line_bm
@@ -45,9 +48,9 @@ def AddressPatten2CacheLineNum(indicators, bit_maps, i):
                 idx += a+b
             idy += a+b
         idc += a+b
-    
+
     return fmap_cache_lines, bmap_cache_lines
-    
+
 def ParameterGet(kernel_stride_padding,idx,h,w):
     kernel, stride, padding = kernel_stride_padding[idx]
     base_size = (8-1)*stride+kernel
@@ -61,7 +64,7 @@ def ParameterGet(kernel_stride_padding,idx,h,w):
     h_new = 8*((h+2*padding)//8+1)
 
     return a, b, w_new, h_new, padding
-    
+
 def SplitTilingFeature(feature_expand,a,b):
     split_list = []
     c, h, w, _ = feature_expand.shape # torch.Size([8*batch size, 36, 36, 8]) or torch.Size([8*batch size, 32, 32, 8])
@@ -98,7 +101,7 @@ def SplitTilingFeature(feature_expand,a,b):
     # print(len(split_list),len(split_list[0]),len(split_list[0][0]))
     # print(split_list[0][0][0].shape,split_list[0][0][1].shape,split_list[0][1][0].shape,split_list[0][1][1].shape)
 
-    return split_list  
+    return split_list
 def SplitNonTilingFeature(feature_expand):
     split_list = []
     c, h, w, _ = feature_expand.shape
@@ -117,14 +120,14 @@ def SplitNonTilingFeature(feature_expand):
         idy = 0
     #print(len(split_list),len(split_list[0]),len(split_list[0][0]))
     #print(split_list[0][0][0].shape,split_list[0][1][1].shape,split_list[0][0][1].shape,split_list[0][1][0].shape)
-    return split_list 
+    return split_list
 
 def Compress(block):
-    cache = [] 
+    cache = []
     bit_map = [] # 2d list size([9,9]) or ([4,4]) , each item for torch.Size([4,4,8]) or ([8,8,8])
-    indicator = [] # 2d list size([9,9]) or ([4,4]) , each item for an int 
+    indicator = [] # 2d list size([9,9]) or ([4,4]) , each item for an int
     #print('block[0][0]:',block[0][0])
-    
+
     for i in range(len(block)): # h direction block number
         list_bmap_temp = []  # bit map element
         list_indicator_temp = []  # indicator element
@@ -133,10 +136,10 @@ def Compress(block):
             block_temp =  block[i][j].reshape(-1) # reshape to 4*4*8=128 or 8*8*8=512
             block[i][j] = block_temp[block_temp.nonzero()].reshape(-1)  # block_temp.nonzero(): index of nonzero
             ######### align to cache line ##### to do
-            block[i][j] = torch.cat((block[i][j] ,torch.zeros((8-block[i][j].shape[0]%8)))) 
+            block[i][j] = torch.cat((block[i][j] ,torch.zeros((8-block[i][j].shape[0]%8))))
             if block[i][j].shape[0]%8 != 0:
                 raise ValueError('please align to cache line')
-            
+
             list_indicator_temp.append(block[i][j].nonzero().reshape(-1).shape[0])
             cache.append(block[i][j])
         indicator.append(list_indicator_temp)
@@ -159,9 +162,9 @@ def SpasityCalculator(bit_map, cache, indicator):
             # print(bit_map[i][j].reshape(-1).shape[0])
             # print(math.ceil(bit_map[i][j].reshape(-1).shape[0]/16/8)*8*16)
             if args.tiling_mode:
-                num_indicator_bits += 16/4 # 16+4+4 indicator + Compress or not + if zero of not ::: 4 tile for 24bit
+                num_indicator_bits += 16/4 # 16 indicator ::: 4 tile for 16bit
             else:
-                num_indicator_bits += 8 #  6+1+1 indicator + Compress or not + if zero of not 
+                num_indicator_bits += 8 #  6 indicator
     #num_fmap_bits = sum_id*16
     # print(SpasityCalculator,num_fmap_bits)
     # print(num_bitmap_bits)
@@ -170,7 +173,7 @@ def SpasityCalculator(bit_map, cache, indicator):
 
 def Integrate(feature, kernel_stride_padding, idx):
     batch_size, c, h, w = feature.shape
- 
+
     feature = feature.view(-1,8,h,w) # torch.Size([8*batch size, 8, 27, 27])
     feature = feature.permute(0,2,3,1) # torch.Size([8*batch size, 27, 27, 8])
     #print(feature.shape)
@@ -183,7 +186,7 @@ def Integrate(feature, kernel_stride_padding, idx):
     else:
         split_list = SplitNonTilingFeature(feature_expand)
     #print(len(split_list[0][0]))
-    
+
     if args.calcu_sparsity:
         spasity_list = []
         all_fmap_bits = 0
@@ -191,9 +194,9 @@ def Integrate(feature, kernel_stride_padding, idx):
         all_bitmap_bits = 0
         for i in range(len(split_list)):  # len(split_list) = batch size * 8
             bit_map, cache, indicator = Compress(split_list[i])
-            
+
             spasitys, num_fmap_bits, num_indicator_bits, num_bitmap_bits = SpasityCalculator(bit_map, cache, indicator)
-            
+
             spasity_list += spasitys
             all_fmap_bits += num_fmap_bits
             all_indicator_bits += num_indicator_bits
@@ -211,7 +214,7 @@ def Integrate(feature, kernel_stride_padding, idx):
             bit_maps.append(bit_map)
         return bit_maps, cache, indicators
 
-		
+
 def main():
     # kernel_stride_padding = [(5,1,2),(3,1,1),(3,1,1),(3,1,1)]
     # h_list = [27,13,13,13]
@@ -238,13 +241,13 @@ def main():
                                          shuffle=False,
                                          num_workers= 30,
                                          )
-    net = alexnet(pretrained=True)                                   
+    net = alexnet(pretrained=True)
 
     pbar = tqdm(total=len(dataloader),ncols=120)
     sum_fmap_bits = 0.0
     sum_indicator_bits = 0.0
     sum_bitmap_bits = 0.0
-    sum_spasity = [] 
+    sum_spasity = []
     cache_lines_data = 0
     bmap_cache_lines = 0
     write = {}
@@ -269,11 +272,13 @@ def main():
             all_fmap_bits, all_indicator_bits, all_bitmap_bits, spasity_list = Integrate(feature, kernel_stride_padding, args.layer)
             sum_fmap_bits += all_fmap_bits
             sum_indicator_bits += all_indicator_bits
-            sum_bitmap_bits += all_bitmap_bits    
-            sum_spasity += spasity_list           
+            sum_bitmap_bits += all_bitmap_bits
+            sum_spasity += spasity_list
         else:
             bit_maps, cache, indicators = Integrate(feature, kernel_stride_padding, args.layer)
-            fmap_temp, bmap_temp = AddressPatten2CacheLineNum(indicators,bit_maps, args.layer)
+            # print(len(indicators), len(indicators[0]), len(indicators[0][0])) => 8 8 8
+            # print(len(bit_maps), len(bit_maps[0]), len(bit_maps[0][0])) => 8 8 8
+            fmap_temp, bmap_temp = AddressPatten2CacheLineNum(indicators, bit_maps, args.layer)
             # print(bmap_temp)
             cache_lines_data += fmap_temp
             bmap_cache_lines += bmap_temp
@@ -281,7 +286,7 @@ def main():
             write['Cache_lines_data'] = '{:.2f}'.format(cache_lines_data/img_total)
             write['Cache_line_bm'] = bmap_cache_lines/img_total
             pbar.set_postfix(write)
-      
+
         pbar.update()
     pbar.close()
     if args.calcu_sparsity:
@@ -292,7 +297,7 @@ def main():
         plt.savefig("sparsity_ft%d_%s.jpg"%(args.layer,args.tiling_mode))
     else:
         print('Cache_line_data: ', cache_lines_data/len(dataset), 'Cache_line_bm: ', bmap_cache_lines/len(dataset))
-    
+
 
 if __name__ == '__main__':
     main()
