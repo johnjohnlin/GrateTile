@@ -34,10 +34,10 @@ class FetchCalculator(object):
         mask_col_u = u_side < self.ysplit_cumsum_[1:  ]
         mask_col_d = d_side > self.ysplit_cumsum_[ :-1]
 
-        mask_row = np.bitwise_and(mask_row_l, mask_row_r)
-        mask_col = np.bitwise_and(mask_col_u, mask_col_d)[:,newaxis]
+        mask_row = np.bitwise_and(mask_row_l, mask_row_r)   #shape([2,])
+        mask_col = np.bitwise_and(mask_col_u, mask_col_d)[:,newaxis]    #shape([2,1])
 
-        mask = np.bitwise_and(mask_col, mask_row).reshape(-1)
+        mask = np.bitwise_and(mask_col, mask_row)
 
         ############################## testing ################################
         # horizontal_mask = [1,1,1,1]
@@ -92,15 +92,15 @@ class FetchCalculator(object):
         # [1,0,0,0]
         # <-------------- first one is the block id ------------> #
 
-        edge_l =  head[0]                     // self.xblk_size_
-        edge_r = (head[0] + tile_size[0] - 1) // self.xblk_size_
-        edge_u =  head[1]                     // self.yblk_size_
-        edge_d = (head[1] + tile_size[1] - 1) // self.yblk_size_
-        edge_f =  head[2]                     // self.cblk_size_
-        edge_b = (head[2] + tile_size[2] - 1) // self.cblk_size_
+        edge_l =  head[0]                     // self.xblk_size_ # floor
+        edge_r = (head[0] + tile_size[0] - 1) // self.xblk_size_ # ceil-1
+        edge_u =  head[1]                     // self.yblk_size_ # floor
+        edge_d = (head[1] + tile_size[1] - 1) // self.yblk_size_ # ceil-1
+        edge_f =  head[2]                     // self.cblk_size_ # floor
+        edge_b = (head[2] + tile_size[2] - 1) // self.cblk_size_ # ceil-1
 
         block_ids_mgrid = np.mgrid[edge_l:edge_r+1, edge_u:edge_d+1, edge_f:edge_b+1]
-        block_ids = np.column_stack(b.flat for b in block_ids_mgrid).astype('i4')
+        block_ids = np.column_stack([b.flat for b in block_ids_mgrid]).astype('i4')
 
         ################### testing ##################### Actually, it is faster than the two lines of numpy code.
         # block_ids = []
@@ -130,23 +130,26 @@ class FetchCalculator(object):
         return block_ids, boolean_masks
 
 class CacheLineCalculator(object):
-    def __init__(self, indicators, bit_maps):
+    def __init__(self, indicators, bit_maps, xsplit, ysplit):
         self.indicators = indicators
         self.bit_maps = bit_maps
+        self.num_xsplit = len(xsplit)
+        self.num_ysplit = len(ysplit)
 
-    def Fetch(self, block_id, boolean_mask):
+    def Fetch(self, block_ids, boolean_mask):
         num_cache_line = 0
         num_cache_line_bmap = 0
-        for i in range(block_id.shape[0]):
-            block_id_ = block_id[i]
-            index_x, index_y, index_c = block_id_[0]*2 , block_id_[1]*2, block_id_[2]
+
+        for i,block_id_ in enumerate(block_ids):
+            index_x, index_y, index_c = block_id_[0]*self.num_xsplit , block_id_[1]*self.num_ysplit, block_id_[2]
 
             mask = boolean_mask[i]
 
-            num_cache_line += (self.indicators[index_c][index_y]   [index_x]   - 1) // 8 + 1 if mask[0] else 0
-            num_cache_line += (self.indicators[index_c][index_y]   [index_x+1] - 1) // 8 + 1 if mask[1] else 0
-            num_cache_line += (self.indicators[index_c][index_y+1] [index_x]   - 1) // 8 + 1 if mask[2] else 0
-            num_cache_line += (self.indicators[index_c][index_y+1] [index_x+1] - 1) // 8 + 1 if mask[3] else 0
+            subtile_ids_mgrid = np.mgrid[index_x:index_x+self.num_xsplit, index_y:index_y+self.num_ysplit]
+            subtile_ids = np.column_stack([b.flat for b in subtile_ids_mgrid]).astype('i4')
+
+            for j, (idx, idy) in enumerate(subtile_ids):
+                num_cache_line += (self.indicators[index_c][idy][idx] - 1) // 8 + 1 if mask[j] else 0
 
             num_cache_line_bmap += 4
 
