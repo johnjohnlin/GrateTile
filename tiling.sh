@@ -1,5 +1,6 @@
 #!/bin/bash
-python3 main.py --calcu_sparsity  --tiling_mode --layer 0
-python3 main.py --calcu_sparsity  --tiling_mode --layer 1
-python3 main.py --calcu_sparsity  --tiling_mode --layer 2
-python3 main.py --calcu_sparsity  --tiling_mode --layer 3
+for i in ${@:2}
+do
+    python3 main.py --grate_tile  --simulate_sparsity --layer $i --model $1;
+done
+

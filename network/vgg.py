@@ -45,7 +45,7 @@ class VGG(nn.Module):
             x = layer(x)
             #print(x.permute(0,2,3,1).shape)
             fmap.append(x)
-   
+
         # x = self.avgpool(x)
         # x = x.view(x.size(0), -1)
         # x = self.classifier(x)
@@ -76,16 +76,16 @@ def make_layers(cfg, batch_norm=False):
         conv2d = nn.Conv2d(in_channels, layer_channel, kernel_size=3, padding=1)
         layer = [conv2d, nn.ReLU(inplace=True)]
 
-        if next_layer == 'M':   
+        if next_layer == 'M':
             layer += [nn.MaxPool2d(kernel_size=2, stride=2)]
             i += 1
 
         layers.append(nn.Sequential(*layer))
         in_channels = layer_channel
         i += 1
-        
+
     return nn.Sequential(*layers)
-              
+
     #     if v == 'M':
     #         layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
     #     else:
@@ -192,8 +192,8 @@ def vgg19_bn(pretrained=False, progress=True, **kwargs):
 
 
 if __name__ == '__main__':
-    net = vgg19(pretrained=True)
+    net = vgg16(pretrained=True)
     net.eval()
     fmap = net(torch.rand((1,3,224,224)))
-    #for map in fmap:
-    #    print(map.shape)
+    for map in fmap:
+        print(map.permute(0,2,3,1).shape)

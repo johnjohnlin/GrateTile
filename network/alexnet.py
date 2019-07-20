@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
@@ -77,3 +78,10 @@ def alexnet(pretrained=False, progress=True, **kwargs):
             dd[key_n] = value
         model.load_state_dict(dd)
     return model
+    
+if __name__ == '__main__':
+    net = alexnet(pretrained=True)
+    net.eval()
+    fmap = net(torch.rand((1,3,224,224)))
+    for map in fmap:
+        print(map.permute(0,2,3,1).shape)

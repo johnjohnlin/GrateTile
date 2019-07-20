@@ -7,7 +7,7 @@ from tqdm import tqdm
 import argparse
 import matplotlib.pyplot as plt
 from model.GrateTile import *
-from config import NetConfig
+from config.config import NetConfig
 
 parser = argparse.ArgumentParser(description='Integrate tiling')
 parser.add_argument('--grate_tile', action='store_true', help='Grate tiling / Naive tiling (T/F)')
@@ -22,6 +22,7 @@ kCSPLIT = 8 # channel spilt
 Config = NetConfig(args.model)
 kernel_stride_padding = Config['kernel_stride_padding']   # kernel_size, stride, padding
 hwc_list = Config['hwc_list'] # feature size and channel
+out_size = 8
 
 def AddressPatten2CacheLineNum(indicators, bit_maps, i):
     fmap_cache_lines = 0
@@ -74,15 +75,16 @@ def AddressPatten2CacheLineNum(indicators, bit_maps, i):
 
 def ExtractTileParameter(kernel_stride_padding,idx,h,w):
     kernel, stride, padding = kernel_stride_padding[idx]
-    base_size = (8-1)*stride+kernel
+    base_size = (out_size-1)*stride+kernel
     b = kernel-stride
     a = base_size-2*b
+    blk_size = a+b
     # if args.grate_tile == True:
     #     w_new = base_size + 8*math.ceil((w+2*padding-base_size)/8.)
     #     h_new = base_size + 8*math.ceil((h+2*padding-base_size)/8.)
     # else:
-    w_pad = 8*((w+2*padding)//8+1)
-    h_pad = 8*((h+2*padding)//8+1)
+    w_pad = blk_size*((w+2*padding)//blk_size+1)
+    h_pad = blk_size*((h+2*padding)//blk_size+1)
 
     return a, b, w_pad, h_pad, padding
 
@@ -96,7 +98,7 @@ def SplitFeature(feature, xysplit, csplit):
     split_idx_x = np.cumsum(np.tile(xysplit, nblock_x))[:-1]
     split_idx_y = np.cumsum(np.tile(xysplit, nblock_y))[:-1]
     split_idx_c = np.cumsum(np.tile( csplit, nblock_c))[:-1]
-    
+
     split_list = []
     for channel_group in np.split(feature.cpu().detach(), split_idx_c, axis=0):
         column_group = np.split(channel_group, split_idx_y, axis=1)
@@ -209,6 +211,7 @@ def main():
     print('===================================')
     print('Tiling = ', args.grate_tile)
     print('Sparsity = ', args.simulate_sparsity)
+    print('Network = ', args.model)
     print('Layer = ', args.layer)
     print('===================================')
 
