@@ -1,3 +1,4 @@
+import torch 
 from torch import nn
 from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
@@ -110,9 +111,9 @@ class MobileNetV2(nn.Module):
 
     def forward(self, x):
         features = self.features(x)
-        x = features.mean([2, 3])
-        x = self.classifier(x)
-        return x ,features
+        # x = features.mean([2, 3])
+        # x = self.classifier(x)
+        return features
 
 
 def mobilenet_v2(pretrained=False, progress=True, **kwargs):
@@ -130,3 +131,13 @@ def mobilenet_v2(pretrained=False, progress=True, **kwargs):
                                             progress=progress)
         model.load_state_dict(state_dict)
     return model
+    
+    
+if __name__ == '__main__':
+    net = mobilenet_v2(pretrained=True)
+    print(net)
+    net.eval()
+    fmap = net(torch.rand((1,3,224,224)))
+    print(fmap.shape)
+    #for map in fmap:
+    #    print(map.shape)

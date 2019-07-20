@@ -8,7 +8,7 @@ import torch
 import torch.utils.data as Data
 from PIL import Image
 class myDataset(Dataset):
-    def __init__(self, img_dir='/home/mediagti2/Dataset/Imagenet', train=False, transform=None):
+    def __init__(self, img_dir='/home/mediarti2/Dataset/Imagenet', train=False, transform=None):
         self.train = train
         self.img_dir = img_dir
         self.transform = transform

@@ -1,5 +1,6 @@
+import torch
 import torch.nn as nn
-
+# from torchsummary import summary
 from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
 __all__ = [
@@ -25,26 +26,31 @@ class VGG(nn.Module):
     def __init__(self, features, num_classes=1000, init_weights=True):
         super(VGG, self).__init__()
         self.features = features
-        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
-        self.classifier = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
-            nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(4096, 4096),
-            nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(4096, num_classes),
-        )
+        # self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(512 * 7 * 7, 4096),
+        #     nn.ReLU(True),
+        #     nn.Dropout(),
+        #     nn.Linear(4096, 4096),
+        #     nn.ReLU(True),
+        #     nn.Dropout(),
+        #     nn.Linear(4096, num_classes),
+        # )
         if init_weights:
             self._initialize_weights()
 
     def forward(self, x):
-        x_ = self.features(x)
-        x = self.avgpool(x_)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
+        fmap = []
+        for layer in self.features:
+            x = layer(x)
+            #print(x.permute(0,2,3,1).shape)
+            fmap.append(x)
+   
+        # x = self.avgpool(x)
+        # x = x.view(x.size(0), -1)
+        # x = self.classifier(x)
 
-        return x,x_
+        return fmap
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -61,19 +67,35 @@ class VGG(nn.Module):
 
 
 def make_layers(cfg, batch_norm=False):
-    layers = []
     in_channels = 3
-    for v in cfg:
-        if v == 'M':
-            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-        else:
-            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
-            if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
-            else:
-                layers += [conv2d, nn.ReLU(inplace=True)]
-            in_channels = v
+    i = 0
+    layers = []
+    while i < len(cfg)-1:
+        layer_channel = cfg[i]
+        next_layer = cfg[i+1]
+        conv2d = nn.Conv2d(in_channels, layer_channel, kernel_size=3, padding=1)
+        layer = [conv2d, nn.ReLU(inplace=True)]
+
+        if next_layer == 'M':   
+            layer += [nn.MaxPool2d(kernel_size=2, stride=2)]
+            i += 1
+
+        layers.append(nn.Sequential(*layer))
+        in_channels = layer_channel
+        i += 1
+        
     return nn.Sequential(*layers)
+              
+    #     if v == 'M':
+    #         layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+    #     else:
+    #         conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
+    #         if batch_norm:
+    #             layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+    #         else:
+    #             layers += [conv2d, nn.ReLU(inplace=True)]
+    #         in_channels = v
+    # return nn.Sequential(*layers)
 
 
 cfgs = {
@@ -89,9 +111,11 @@ def _vgg(arch, cfg, batch_norm, pretrained, progress, **kwargs):
         kwargs['init_weights'] = False
     model = VGG(make_layers(cfgs[cfg], batch_norm=batch_norm), **kwargs)
     if pretrained:
-        state_dict = load_state_dict_from_url(model_urls[arch],
-                                              progress=progress)
-        model.load_state_dict(state_dict)
+        state_dict = load_state_dict_from_url(model_urls[arch], progress=progress)
+        dd = model.state_dict()
+        for (key_n, value_n),(key,value) in zip(dd.items(),state_dict.items()):
+            dd[key_n] = value
+        model.load_state_dict(dd)
     return model
 
 
@@ -165,3 +189,11 @@ def vgg19_bn(pretrained=False, progress=True, **kwargs):
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     return _vgg('vgg19_bn', 'E', True, pretrained, progress, **kwargs)
+
+
+if __name__ == '__main__':
+    net = vgg19(pretrained=True)
+    net.eval()
+    fmap = net(torch.rand((1,3,224,224)))
+    #for map in fmap:
+    #    print(map.shape)

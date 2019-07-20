@@ -231,3 +231,13 @@ class BasicConv2d(nn.Module):
         x = self.conv(x)
         x = self.bn(x)
         return F.relu(x, inplace=True)
+        
+        
+if __name__ == '__main__':
+    net = googlenet(pretrained=True)
+    print(net)
+    net.eval()
+    fmap = net(torch.rand((1,3,224,224)))[1]
+    print(fmap.shape)
+    #for map in fmap:
+    #    print(map.shape)

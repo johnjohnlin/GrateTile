@@ -37,6 +37,21 @@ class FetchCalculator(object):
         mask_row = np.bitwise_and(mask_row_l, mask_row_r)   #shape([2,])
         mask_col = np.bitwise_and(mask_col_u, mask_col_d)[:,newaxis]    #shape([2,1])
 
+        '''
+        mask_row
+        [T T]: all block
+        [T F]: left block
+        [F T]: right block
+
+        mask_col
+        [[T]
+         [T]]: all block
+        [[T]
+         [F]]: up block 
+        [[F]
+         [T]]: down block
+        '''
+
         mask = np.bitwise_and(mask_col, mask_row)
 
         ############################## testing ################################
@@ -123,6 +138,7 @@ class FetchCalculator(object):
         boolean_masks = np.empty(
                 (block_ids.shape[0], len(self.xsplit)*len(self.ysplit)),
                 dtype='i4')
+
         for i, block_id in enumerate(block_ids):
             l_side, u_side, r_side, d_side = self.ClampBlock(block_id, head, tile_size)
             mask = self.CalculateMask(l_side, u_side, r_side, d_side)
@@ -139,16 +155,17 @@ class CacheLineCalculator(object):
     def Fetch(self, block_ids, boolean_mask):
         num_cache_line = 0
         num_cache_line_bmap = 0
+        
+        for i,(index_x,index_y,index_c) in enumerate(block_ids):  # block_ids shape([num_block,3])
+            
+            index_x *= self.num_xsplit
+            index_y *= self.num_ysplit            
 
-        for i,block_id_ in enumerate(block_ids):
-            index_x, index_y, index_c = block_id_[0]*self.num_xsplit , block_id_[1]*self.num_ysplit, block_id_[2]
-
-            mask = boolean_mask[i]
-
-            subtile_ids_mgrid = np.mgrid[index_x:index_x+self.num_xsplit, index_y:index_y+self.num_ysplit]
-            subtile_ids = np.column_stack([b.flat for b in subtile_ids_mgrid]).astype('i4')
-
-            for j, (idx, idy) in enumerate(subtile_ids):
+            subtile_ids_mgrid = np.mgrid[index_y:index_y+self.num_ysplit, index_x:index_x+self.num_xsplit]
+            subtile_ids = np.column_stack([b.flat for b in subtile_ids_mgrid]).astype('i4')  # shape([num_xsplit*num_ysplit, 2])
+            
+            mask = boolean_mask[i]  # shape([num_xsplit*num_ysplit,])
+            for j, (idy, idx) in enumerate(subtile_ids):
                 num_cache_line += (self.indicators[index_c][idy][idx] - 1) // 8 + 1 if mask[j] else 0
 
             num_cache_line_bmap += 4

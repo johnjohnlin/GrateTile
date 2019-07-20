@@ -47,7 +47,7 @@ class AlexNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(4096, num_classes),
         )
-        self.ks_list=[(5,1,2),(3,1,1),(3,1,1),(3,1,1)]  # kernel_size, stride, padding
+        
     def forward(self, x):
         ft1 = self.features1(x)
         ft2 = self.features2(ft1)
@@ -55,10 +55,10 @@ class AlexNet(nn.Module):
         ft4 = self.features4(ft3)
         ft5 = self.features5(ft4)
 
-        x = self.avgpool(ft5)
-        x = x.view(x.size(0), 256 * 6 * 6)
-        x = self.classifier(x)
-        return x, ft1, ft2, ft3, ft4, ft5, self.ks_list
+        # x = self.avgpool(ft5)
+        # x = x.view(x.size(0), 256 * 6 * 6)
+        # x = self.classifier(x)
+        return [ft1, ft2, ft3, ft4, ft5]
 
 
 def alexnet(pretrained=False, progress=True, **kwargs):

@@ -1,56 +1,76 @@
-from network.alexnet import alexnet
 import numpy as np
-import torchvision
 from torchvision import transforms
 import torch
-import cv2
-import os
 from dataloader import myDataset
 import torch.utils.data as Data
 from tqdm import tqdm
-import math
 import argparse
 import matplotlib.pyplot as plt
 from model.GrateTile import *
-## hyper parameter
-cuda = True
-BATCH_SIZE = 1
-kCSPLIT = 8 # channel spilt
-kernel_stride_padding = [(5,1,2), (3,1,1), (3,1,1), (3,1,1)]   # kernel_size, stride, padding
-hwc_list = [(27,27,64), (13,13,192), (13,13,384), (13,13,256)] # feature size and channel
+from config import NetConfig
 
 parser = argparse.ArgumentParser(description='Integrate tiling')
 parser.add_argument('--grate_tile', action='store_true', help='Grate tiling / Naive tiling (T/F)')
 parser.add_argument('--simulate_sparsity', action='store_true', help='True to perform sparsity simulation')
 parser.add_argument('--layer', default=0, type=int, help='the layer')
+parser.add_argument('--model', default='alexnet', help='pre-train model')
 args = parser.parse_args()
 
-def AddressPatten2CacheLineNum(indicators, bit_maps, i):    
+## hyper parameter
+BATCH_SIZE = 1
+kCSPLIT = 8 # channel spilt
+Config = NetConfig(args.model)
+kernel_stride_padding = Config['kernel_stride_padding']   # kernel_size, stride, padding
+hwc_list = Config['hwc_list'] # feature size and channel
+
+def AddressPatten2CacheLineNum(indicators, bit_maps, i):
     fmap_cache_lines = 0
     bmap_cache_lines = 0
-    h,w,c = hwc_list[i]
-    a, b, w_pad, h_pad, padding = ExtractTileParameter(kernel_stride_padding, i, h, w)   
-    xsplit = (b, a) if args.grate_tile else (8,) 
-    ysplit = (b, a) if args.grate_tile else (8,) 
+    h, w, c = hwc_list[i]
+
+    a, b, w_pad, h_pad, _ = ExtractTileParameter(kernel_stride_padding, i, h, w)
+    xsplit = (b, a) if args.grate_tile else (8,)
+    ysplit = (b, a) if args.grate_tile else (8,)
+
     fc = FetchCalculator(xsplit, ysplit, kCSPLIT)
     clc = CacheLineCalculator(indicators, bit_maps, xsplit, ysplit)
-    idc = 0
-    while idc+kCSPLIT <= c:
-        idy = 0
-        while idy+a+b <= h_pad:
-            idx  = 0
-            while idx+a+b <= w_pad:
-                head = (idx,idy,idc)
-                tile_size = (min(idx+a+b*2,w_pad)-idx, min(idy+a+b*2,h_pad)-idy, 8)
-                block_id, block_mask = fc.Fetch(head, tile_size)
-                cache_line_fm, cache_line_bm = clc.Fetch(block_id, block_mask)
-                fmap_cache_lines += cache_line_fm
-                bmap_cache_lines += cache_line_bm
-                idx += fc.xblk_size_
-            idy += fc.yblk_size_
-        idc += fc.cblk_size_
+
+    address_pattern_grid = np.mgrid[0:c:8,0:h_pad:8,0:w_pad:8]
+    address_pattern = np.column_stack([b.flat for b in address_pattern_grid])[:,::-1].astype('i4')
+
+    for address in address_pattern:
+        head = (address[0], address[1], address[2])
+        tile_size = (min(head[0]+a+b*2,w_pad)-head[0], min(head[1]+a+b*2,w_pad)-head[1], 8)
+
+        block_id, block_mask = fc.Fetch(head, tile_size)
+        cache_line_fm, cache_line_bm = clc.Fetch(block_id, block_mask)
+        fmap_cache_lines += cache_line_fm
+        bmap_cache_lines += cache_line_bm
 
     return fmap_cache_lines, bmap_cache_lines
+    # idc = 0
+    # while idc+kCSPLIT <= c:
+    #     idy = 0
+    #     while idy+a+b <= h_pad:
+    #         idx  = 0
+    #         while idx+a+b <= w_pad:
+    #             head = (idx,idy,idc)
+    #             tile_size = (min(idx+a+b*2,w_pad)-idx, min(idy+a+b*2,h_pad)-idy, 8)
+    #             #print(head)
+    #             #print('\n',tile_size)
+
+    #             block_id, block_mask = fc.Fetch(head, tile_size)
+
+    #             cache_line_fm, cache_line_bm = clc.Fetch(block_id, block_mask)
+
+    #             fmap_cache_lines += cache_line_fm
+    #             bmap_cache_lines += cache_line_bm
+
+    #             idx += fc.xblk_size_
+    #         idy += fc.yblk_size_
+    #     idc += fc.cblk_size_
+    # raise ValueError('gyugyuy')
+    # return fmap_cache_lines, bmap_cache_lines
 
 def ExtractTileParameter(kernel_stride_padding,idx,h,w):
     kernel, stride, padding = kernel_stride_padding[idx]
@@ -72,16 +92,18 @@ def SplitFeature(feature, xysplit, csplit):
     nblock_x = w // sum(xysplit)
     nblock_y = h // sum(xysplit)
     nblock_c = c // sum(csplit)
+
     split_idx_x = np.cumsum(np.tile(xysplit, nblock_x))[:-1]
     split_idx_y = np.cumsum(np.tile(xysplit, nblock_y))[:-1]
     split_idx_c = np.cumsum(np.tile( csplit, nblock_c))[:-1]
+    
     split_list = []
     for channel_group in np.split(feature.cpu().detach(), split_idx_c, axis=0):
-        column_group = np.split(channel_group, split_idx_y, axis=1) 
+        column_group = np.split(channel_group, split_idx_y, axis=1)
         # split and flatten
         splits = [np.split(feat, split_idx_x, axis=2) for feat in column_group]
         split_list.append(splits)
-    #print(len(split_list),len(split_list[0]),len(split_list[0][0]))
+    #print(len(split_list),len(split_list[0]),len(split_list[0][0])) #channel/8, col:8, row:8
     return split_list
 
 def Compress(block):
@@ -93,10 +115,12 @@ def Compress(block):
     for i in range(len(block)): # h direction block number
         list_bmap_temp = []  # bit map element
         list_indicator_temp = []  # indicator element
+
         for j in range(len(block[i])): # w direction block number
             list_bmap_temp.append(block[i][j]>0)
             block_temp =  block[i][j].reshape(-1) # reshape to 4*4*8=128 or 8*8*8=512
             block[i][j] = block_temp[block_temp.nonzero()].reshape(-1)  # block_temp.nonzero(): index of nonzero
+
             ######### align to cache line ##### to do
             block[i][j] = torch.cat((block[i][j] ,torch.zeros((8-block[i][j].shape[0]%8))))
             if block[i][j].shape[0]%8 != 0:
@@ -104,8 +128,10 @@ def Compress(block):
 
             list_indicator_temp.append(block[i][j].nonzero().reshape(-1).shape[0])
             cache.append(block[i][j])
+
         indicator.append(list_indicator_temp)
         bit_map.append(list_bmap_temp)
+
     cache = torch.cat(cache) #1d torch torch.Size([81]) or ([16]) each item for a float tensor
 
     return bit_map, cache, indicator
@@ -116,7 +142,7 @@ def SparsityCalculator(bit_map, cache, indicator):
     num_fmap_bits = 0
     num_indicator_bits = 0
     h, w = len(bit_map), len(bit_map[0])
-    # print(h,w)
+
     for i in range(h):
         for j in range(w):
             sparsitys.append(( bit_map[i][j].reshape(-1).shape[0]-indicator[i][j]) / float(bit_map[i][j].reshape(-1).shape[0]))
@@ -124,6 +150,7 @@ def SparsityCalculator(bit_map, cache, indicator):
             num_bitmap_bits += bit_map[i][j].reshape(-1).shape[0]
             # print(bit_map[i][j].reshape(-1).shape[0])
             # print(math.ceil(bit_map[i][j].reshape(-1).shape[0]/16/8)*8*16)
+
             if args.grate_tile:
                 num_indicator_bits += 16/4 # 16 indicator ::: 4 tile for 16bit
             else:
@@ -145,7 +172,6 @@ def Integrate(feature, kernel_stride_padding, idx):
     feature_padded[:, padding:padding+h, padding:padding+w] = feature
     xysplit = (b, a) if args.grate_tile else (8,)
     split_list = SplitFeature(feature_padded, xysplit, (kCSPLIT,))
-
 
     if args.simulate_sparsity:
         sparsity_list = []
@@ -188,8 +214,7 @@ def main():
 
 
 
-    dataset = myDataset(img_dir='/home/mediagti2/Dataset/Imagenet',
-                        train=False,
+    dataset = myDataset(img_dir='/home/mediarti2/Dataset/Imagenet',
                         transform=transforms.Compose([
                         #transforms.ToPILImage(),
                         transforms.Resize(256),
@@ -197,12 +222,13 @@ def main():
                         transforms.ToTensor(),
                         transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225)),
                            ]))
-    dataloader = Data.DataLoader(dataset, 
+    dataloader = Data.DataLoader(dataset,
                                  batch_size=BATCH_SIZE,
                                  shuffle=False,
                                  num_workers= 30,
                                 )
-    net = alexnet(pretrained=True)
+    net = Config['net'].cuda()
+    net.eval()
 
     pbar = tqdm(total=len(dataloader),ncols=120)
     sum_fmap_bits = 0.0
@@ -213,21 +239,11 @@ def main():
     bmap_cache_lines = 0
     write = {}
     img_total = 0
-    for step, (img, label) in enumerate(dataloader):
-        if cuda:
-            net = net.cuda()
-        img = img.cuda()
-        net.eval()
-        output, feature1, feature2, feature3, feature4, feature5, kernel_stride_padding = net(img)  # kernel_stride_padding include kernel size, stride and padding
+    for img, _ in dataloader:
 
-        if args.layer == 0:
-            feature = feature1
-        elif args.layer == 1:
-            feature = feature2
-        elif args.layer == 2:
-            feature = feature3
-        else:
-            feature = feature4
+        img = img.cuda()
+        features = net(img)  # kernel_stride_padding include kernel size, stride and padding
+        feature = features[args.layer]
 
         if args.simulate_sparsity:
             all_fmap_bits, all_indicator_bits, all_bitmap_bits, sparsity_list = Integrate(feature, kernel_stride_padding, args.layer)
@@ -235,6 +251,7 @@ def main():
             sum_indicator_bits += all_indicator_bits
             sum_bitmap_bits += all_bitmap_bits
             sum_sparsity += sparsity_list
+
         else:
             bit_maps, cache, indicators = Integrate(feature, kernel_stride_padding, args.layer)
             # print(len(indicators), len(indicators[0]), len(indicators[0][0])) => 8 8 8
