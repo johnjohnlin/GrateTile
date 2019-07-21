@@ -145,8 +145,9 @@ class FetchCalculator(object):
             boolean_masks[i] = mask.flat
         return block_ids, boolean_masks
 
-class CacheLineCalculator(object):
+class CacheLineCalculator(object): 
     def __init__(self, indicators, bit_maps, xsplit, ysplit):
+        # assume the block size is 8*8
         self.indicators = indicators
         self.bit_maps = bit_maps
         self.num_xsplit = len(xsplit)
@@ -167,6 +168,7 @@ class CacheLineCalculator(object):
             mask = boolean_mask[i]  # shape([num_xsplit*num_ysplit,])
             for j, (idy, idx) in enumerate(subtile_ids):
                 num_cache_line += (self.indicators[index_c][idy][idx] - 1) // 8 + 1 if mask[j] else 0
+                num_cache_line += 1 if mask[j] and self.indicators[index_c][idy][idx] == 0 else 0
 
             num_cache_line_bmap += 4
 

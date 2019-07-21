@@ -7,7 +7,8 @@ from tqdm import tqdm
 import argparse
 import matplotlib.pyplot as plt
 from model.GrateTile import *
-from config.config import NetConfig
+import config
+import os
 
 parser = argparse.ArgumentParser(description='Integrate tiling')
 parser.add_argument('--grate_tile', action='store_true', help='Grate tiling / Naive tiling (T/F)')
@@ -17,21 +18,20 @@ parser.add_argument('--model', default='alexnet', help='pre-train model')
 args = parser.parse_args()
 
 ## hyper parameter
-BATCH_SIZE = 1
+BATCH_SIZE = config.BATCH_SIZE
 kCSPLIT = 8 # channel spilt
-Config = NetConfig(args.model)
+Config = config.NetConfig(args.model)
 kernel_stride_padding = Config['kernel_stride_padding']   # kernel_size, stride, padding
-hwc_list = Config['hwc_list'] # feature size and channel
 out_size = 8
 
-def AddressPatten2CacheLineNum(indicators, bit_maps, i):
+def AddressPatten2CacheLineNum(indicators, bit_maps, i, hwc):
     fmap_cache_lines = 0
     bmap_cache_lines = 0
-    h, w, c = hwc_list[i]
+    _, c, h, w = hwc
 
     a, b, w_pad, h_pad, _ = ExtractTileParameter(kernel_stride_padding, i, h, w)
-    xsplit = (b, a) if args.grate_tile else (8,)
-    ysplit = (b, a) if args.grate_tile else (8,)
+    xsplit = (b, a) if args.grate_tile and b!=0 else (8,)
+    ysplit = (b, a) if args.grate_tile and b!=0 else (8,)
 
     fc = FetchCalculator(xsplit, ysplit, kCSPLIT)
     clc = CacheLineCalculator(indicators, bit_maps, xsplit, ysplit)
@@ -78,6 +78,7 @@ def ExtractTileParameter(kernel_stride_padding,idx,h,w):
     base_size = (out_size-1)*stride+kernel
     b = kernel-stride
     a = base_size-2*b
+    # a = a%8 if a > 8 else a
     blk_size = a+b
     # if args.grate_tile == True:
     #     w_new = base_size + 8*math.ceil((w+2*padding-base_size)/8.)
@@ -139,6 +140,7 @@ def Compress(block):
     return bit_map, cache, indicator
 
 def SparsityCalculator(bit_map, cache, indicator):
+    # assume the block size is 8*8
     sparsitys = []
     num_bitmap_bits = 0 # bit map bit summation
     num_fmap_bits = 0
@@ -172,7 +174,7 @@ def Integrate(feature, kernel_stride_padding, idx):
     a, b, w_pad, h_pad, padding = ExtractTileParameter(kernel_stride_padding, idx, h, w)
     feature_padded = torch.zeros((feature.shape[0], h_pad, w_pad))  # torch.Size([8*batch size, 36, 36, 8]) or torch.Size([8*batch size, 32, 32, 8])
     feature_padded[:, padding:padding+h, padding:padding+w] = feature
-    xysplit = (b, a) if args.grate_tile else (8,)
+    xysplit = (b, a) if args.grate_tile and b!=0 else (8,)
     split_list = SplitFeature(feature_padded, xysplit, (kCSPLIT,))
 
     if args.simulate_sparsity:
@@ -215,7 +217,9 @@ def main():
     print('Layer = ', args.layer)
     print('===================================')
 
-
+    histogram_save_path = os.path.join('profile',args.model)
+    if args.simulate_sparsity and not os.path.isdir(histogram_save_path):
+        os.system('mkdir -p %s' % histogram_save_path)
 
     dataset = myDataset(img_dir='/home/mediarti2/Dataset/Imagenet',
                         transform=transforms.Compose([
@@ -244,6 +248,7 @@ def main():
     img_total = 0
     for img, _ in dataloader:
 
+        img_total += 1
         img = img.cuda()
         features = net(img)  # kernel_stride_padding include kernel size, stride and padding
         feature = features[args.layer]
@@ -259,13 +264,12 @@ def main():
             bit_maps, cache, indicators = Integrate(feature, kernel_stride_padding, args.layer)
             # print(len(indicators), len(indicators[0]), len(indicators[0][0])) => 8 8 8
             # print(len(bit_maps), len(bit_maps[0]), len(bit_maps[0][0])) => 8 8 8
-            fmap_temp, bmap_temp = AddressPatten2CacheLineNum(indicators, bit_maps, args.layer)
+            fmap_temp, bmap_temp = AddressPatten2CacheLineNum(indicators, bit_maps, args.layer, feature.shape)
             # print(bmap_temp)
             cache_lines_data += fmap_temp
             bmap_cache_lines += bmap_temp
-            img_total += 1
             write['Cache_lines_data'] = '{:.2f}'.format(cache_lines_data/img_total)
-            write['Cache_line_bm'] = bmap_cache_lines/img_total
+            write['Cache_line_bm'] = '{:.2f}'.format(bmap_cache_lines/img_total)
             pbar.set_postfix(write)
 
         pbar.update()
@@ -275,7 +279,8 @@ def main():
         hist = np.histogram([i for i in sum_sparsity if i < 1], bins=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
         plt.xticks(np.arange(10),( '<0.1', '<0.2', '<0.3', '<0.4', '<0.5', '<0.6', '<0.7', '<0.8', '<0.9', '<1'))
         plt.bar(np.arange(10), hist[0])  # arguments are passed to np.histogram
-        plt.savefig("sparsity_ft%d_%s.jpg"%(args.layer,args.grate_tile))
+        plt.savefig(os.path.join(histogram_save_path, 'sparsity_ft%d_%s.jpg'%(args.layer,args.grate_tile)))
+        np.save(os.path.join(histogram_save_path, 'sparsity_ft%d_%s.npy'%(args.layer,args.grate_tile)),hist)
     else:
         print('Cache_line_data: ', cache_lines_data/len(dataset), 'Cache_line_bm: ', bmap_cache_lines/len(dataset))
 
