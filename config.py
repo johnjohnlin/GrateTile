@@ -9,14 +9,14 @@ BATCH_SIZE = 1
 def blk(type,first,i):
     if type=='BasicBlock':
         if first and i != 0:
-            return [(3,2,1),(3,1,1)]
+            return [[(3,2,1),(1,2,0)],[(3,1,1)]]
         else:
-            return [(3,1,1),(3,1,1)]
+            return [[(3,1,1)],[(3,1,1)]]
     else:
         if first and i != 0:
-            return [(1,1,0),(3,2,1),(1,1,0)]
+            return [[(1,1,0),(1,2,0)],[(3,2,1)],[(1,1,0)]]
         else:
-            return [(1,1,0),(3,1,1),(1,1,0)]
+            return [[(1,1,0)],[(3,1,1)],[(1,1,0)]]
 
 def resnet_ksp(block, layers):
     ksp = list()
@@ -27,27 +27,27 @@ def resnet_ksp(block, layers):
     return ksp
 
 alexnet_config = dict(
-    kernel_stride_padding = [(5,1,2), (3,1,1), (3,1,1), (3,1,1)],
+    kernel_stride_padding = [[(5,1,2)], [(3,1,1)], [(3,1,1)], [(3,1,1)]],
     net = alexnet(pretrained=True)
 )
 
 vgg11_config = dict(
-    kernel_stride_padding = [(3,1,1)]*7,
+    kernel_stride_padding = [[(3,1,1)]]*7,
     net = vgg11(pretrained=True)
 )
 
 vgg13_config = dict(
-    kernel_stride_padding = [(3,1,1)]*9,
+    kernel_stride_padding = [[(3,1,1)]]*9,
     net = vgg13(pretrained=True)
 )
 
 vgg16_config = dict(
-    kernel_stride_padding = [(3,1,1)]*12,
+    kernel_stride_padding = [[(3,1,1)]]*12,
     net = vgg16(pretrained=True)
 )
 
 vgg19_config = dict(
-    kernel_stride_padding = [(3,1,1)]*15,
+    kernel_stride_padding = [[(3,1,1)]]*15,
     net = vgg19(pretrained=True)
 )
 
@@ -100,3 +100,6 @@ def NetConfig(net='alexnet'):
         return resnet101_config
     elif net == 'resnet152':
         return resnet152_config
+
+if __name__ == '__main__':
+    print(resnet18_config['kernel_stride_padding'])

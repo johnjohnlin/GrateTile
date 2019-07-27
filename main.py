@@ -10,9 +10,13 @@ from model.GrateTile import *
 import config
 import os
 
+################################## Warning ###########################################
+# kernel size (5*5) with stride 2 is NOT support
+######################################################################################
+
 parser = argparse.ArgumentParser(description='Integrate tiling')
 parser.add_argument('--grate_tile', action='store_true', help='Grate tiling / Naive tiling (T/F)')
-parser.add_argument('--simulate_sparsity', action='store_true', help='True to perform sparsity simulation')
+parser.add_argument('--simulate_memory', action='store_true', help='True to perform sparsity simulation')
 parser.add_argument('--layer', default=0, type=int, help='the layer')
 parser.add_argument('--model', default='alexnet', help='pre-train model')
 args = parser.parse_args()
@@ -24,70 +28,44 @@ Config = config.NetConfig(args.model)
 kernel_stride_padding = Config['kernel_stride_padding']   # kernel_size, stride, padding
 out_size = 8
 
-def AddressPatten2CacheLineNum(indicators, bit_maps, i, hwc):
-    fmap_cache_lines = 0
-    bmap_cache_lines = 0
+def AddressPatten2CacheLineNum(indicators, hwc, ksp):
+    cache_lines = 0
     _, c, h, w = hwc
 
-    a, b, w_pad, h_pad, _ = ExtractTileParameter(kernel_stride_padding, i, h, w)
-    xsplit = (b, a) if args.grate_tile and b!=0 else (8,)
-    ysplit = (b, a) if args.grate_tile and b!=0 else (8,)
+    a, b, w_pad, h_pad, _, fetch_size = ExtractTileParameter(ksp, h, w)
+    xsplit = (b, a) if args.grate_tile and b>0 else (8,)
+    ysplit = (b, a) if args.grate_tile and b>0 else (8,)
+    fetch_size = fetch_size if b>0 else 8
 
     fc = FetchCalculator(xsplit, ysplit, kCSPLIT)
-    clc = CacheLineCalculator(indicators, bit_maps, xsplit, ysplit)
+    clc = CacheLineCalculator(indicators, xsplit, ysplit)
 
     address_pattern_grid = np.mgrid[0:c:8,0:h_pad:8,0:w_pad:8]
     address_pattern = np.column_stack([b.flat for b in address_pattern_grid])[:,::-1].astype('i4')
 
     for address in address_pattern:
         head = (address[0], address[1], address[2])
-        tile_size = (min(head[0]+a+b*2,w_pad)-head[0], min(head[1]+a+b*2,w_pad)-head[1], 8)
+        tile_size = (min(head[0]+fetch_size,w_pad)-head[0], min(head[1]+fetch_size,w_pad)-head[1], 8)
 
         block_id, block_mask = fc.Fetch(head, tile_size)
-        cache_line_fm, cache_line_bm = clc.Fetch(block_id, block_mask)
-        fmap_cache_lines += cache_line_fm
-        bmap_cache_lines += cache_line_bm
+        cache_line = clc.Fetch(block_id, block_mask)
+        cache_lines += cache_line
 
-    return fmap_cache_lines, bmap_cache_lines
-    # idc = 0
-    # while idc+kCSPLIT <= c:
-    #     idy = 0
-    #     while idy+a+b <= h_pad:
-    #         idx  = 0
-    #         while idx+a+b <= w_pad:
-    #             head = (idx,idy,idc)
-    #             tile_size = (min(idx+a+b*2,w_pad)-idx, min(idy+a+b*2,h_pad)-idy, 8)
-    #             #print(head)
-    #             #print('\n',tile_size)
+    return cache_lines
 
-    #             block_id, block_mask = fc.Fetch(head, tile_size)
-
-    #             cache_line_fm, cache_line_bm = clc.Fetch(block_id, block_mask)
-
-    #             fmap_cache_lines += cache_line_fm
-    #             bmap_cache_lines += cache_line_bm
-
-    #             idx += fc.xblk_size_
-    #         idy += fc.yblk_size_
-    #     idc += fc.cblk_size_
-    # raise ValueError('gyugyuy')
-    # return fmap_cache_lines, bmap_cache_lines
-
-def ExtractTileParameter(kernel_stride_padding,idx,h,w):
-    kernel, stride, padding = kernel_stride_padding[idx]
+def ExtractTileParameter(ksp,h,w):
+    kernel, stride, padding = ksp
     base_size = (out_size-1)*stride+kernel
     b = kernel-stride
-    a = base_size-2*b
-    # a = a%8 if a > 8 else a
-    blk_size = a+b
-    # if args.grate_tile == True:
-    #     w_new = base_size + 8*math.ceil((w+2*padding-base_size)/8.)
-    #     h_new = base_size + 8*math.ceil((h+2*padding-base_size)/8.)
-    # else:
-    w_pad = blk_size*((w+2*padding)//blk_size+1)
-    h_pad = blk_size*((h+2*padding)//blk_size+1)
+    full_a = base_size-2*b
+    a = full_a%8 if full_a > 8 else full_a
+    blk_size = 8
 
-    return a, b, w_pad, h_pad, padding
+    w_pad = blk_size*((w+padding)//blk_size+1)
+    h_pad = blk_size*((h+padding)//blk_size+1)
+
+    fetch_size = full_a + 2*b
+    return a, b, w_pad, h_pad, padding, fetch_size
 
 def SplitFeature(feature, xysplit, csplit):
 
@@ -116,109 +94,105 @@ def Compress(block):
     #print('block[0][0]:',block[0][0])
 
     for i in range(len(block)): # h direction block number
-        list_bmap_temp = []  # bit map element
         list_indicator_temp = []  # indicator element
-
+        list_cache_temp = []
+        list_bit_map = []
         for j in range(len(block[i])): # w direction block number
-            list_bmap_temp.append(block[i][j]>0)
-            block_temp =  block[i][j].reshape(-1) # reshape to 4*4*8=128 or 8*8*8=512
-            block[i][j] = block_temp[block_temp.nonzero()].reshape(-1)  # block_temp.nonzero(): index of nonzero
+            orginal = block[i][j]
+            temp = block[i][j].reshape(-1)
+            compressed = temp[temp.nonzero()].reshape(-1)  # temp.nonzero(): index of nonzero
+            all_zero = compressed.nonzero().reshape(-1).shape[0] == 0
 
-            ######### align to cache line ##### to do
-            block[i][j] = torch.cat((block[i][j] ,torch.zeros((8-block[i][j].shape[0]%8))))
-            if block[i][j].shape[0]%8 != 0:
-                raise ValueError('please align to cache line')
+            bit_map_tmp = (orginal>0).reshape(-1).float()
+            if bit_map_tmp.shape[0]%16 != 0:
+                bit_map_tmp =  torch.cat((bit_map_tmp ,torch.zeros((16-bit_map_tmp.shape[0]%16))))
 
-            list_indicator_temp.append(block[i][j].nonzero().reshape(-1).shape[0])
-            cache.append(block[i][j])
+            binary_mul = torch.tensor([32768, 16384, 8192, 4096, 2048, 1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1]).reshape(-1,1).float()
+            bit_map_tmp = torch.matmul(bit_map_tmp.reshape(-1,16), binary_mul).reshape(-1)
+            compressed = torch.cat((bit_map_tmp ,compressed))
+
+            if compressed.shape[0]%8 != 0:
+                compressed = torch.cat((compressed ,torch.zeros((8-compressed.shape[0]%8))))
+
+            if all_zero:
+                list_indicator_temp.append(0)
+                list_cache_temp.append(torch.tensor([]))
+                list_bit_map.append(0)
+            elif orginal.reshape(-1).shape[0] <= compressed.shape[0]: #uncompressed
+                list_indicator_temp.append(orginal.reshape(-1).shape[0]//8)
+                list_cache_temp.append(orginal.reshape(-1))
+                list_bit_map.append(0)
+            else:                                                   #compressed
+                list_indicator_temp.append(compressed.shape[0]//8)
+                list_cache_temp.append(compressed)
+                list_bit_map.append(bit_map_tmp.shape[0])
 
         indicator.append(list_indicator_temp)
-        bit_map.append(list_bmap_temp)
+        cache.append(list_cache_temp)
+        bit_map.append(list_bit_map)
 
-    cache = torch.cat(cache) #1d torch torch.Size([81]) or ([16]) each item for a float tensor
+    return cache, indicator, bit_map
 
-    return bit_map, cache, indicator
-
-def SparsityCalculator(bit_map, cache, indicator):
+def MemoryCalculator(cache, bit_map):
     # assume the block size is 8*8
-    sparsitys = []
-    num_bitmap_bits = 0 # bit map bit summation
-    num_fmap_bits = 0
-    num_indicator_bits = 0
-    h, w = len(bit_map), len(bit_map[0])
+    num_dram_bits = 0
+    num_bmap_bits = 0
+    num_sram_bits = 0
+    h, w = len(cache), len(cache[0])
 
     for i in range(h):
         for j in range(w):
-            sparsitys.append(( bit_map[i][j].reshape(-1).shape[0]-indicator[i][j]) / float(bit_map[i][j].reshape(-1).shape[0]))
-            num_fmap_bits += indicator[i][j]*16 # one of nonzero feature map is 16 bits
-            num_bitmap_bits += bit_map[i][j].reshape(-1).shape[0]
-            # print(bit_map[i][j].reshape(-1).shape[0])
-            # print(math.ceil(bit_map[i][j].reshape(-1).shape[0]/16/8)*8*16)
-
+            num_dram_bits += cache[i][j].shape[0]*16
+            num_bmap_bits += bit_map[i][j]*16
             if args.grate_tile:
-                num_indicator_bits += 16/4 # 16 indicator ::: 4 tile for 16bit
+                num_sram_bits += 16/4 # 16 indicator ::: 4 tile for 16bit
             else:
-                num_indicator_bits += 8 #  6 indicator
-    #num_fmap_bits = sum_id*16
-    # print(SparsityCalculator,num_fmap_bits)
-    # print(num_bitmap_bits)
-    # raise ValueError('Lets look')
-    return sparsitys, num_fmap_bits, num_indicator_bits, num_bitmap_bits
+                num_sram_bits += 8 #  6 indicator
+    return num_dram_bits, num_bmap_bits, num_sram_bits
 
-def Integrate(feature, kernel_stride_padding, idx):
+def Integrate(feature, ksp, idx):
     batch_size, c, h, w = feature.shape
 
     feature = feature.view(-1,h,w) # torch.Size([8*batch size, 8, 27, 27])
     #feature = feature.permute(0,2,3,1) # torch.Size([8*batch size, 27, 27, 8])
-    #print(feature.shape)
-    a, b, w_pad, h_pad, padding = ExtractTileParameter(kernel_stride_padding, idx, h, w)
+    a, b, w_pad, h_pad, padding, _ = ExtractTileParameter(ksp, h, w)
     feature_padded = torch.zeros((feature.shape[0], h_pad, w_pad))  # torch.Size([8*batch size, 36, 36, 8]) or torch.Size([8*batch size, 32, 32, 8])
     feature_padded[:, padding:padding+h, padding:padding+w] = feature
-    xysplit = (b, a) if args.grate_tile and b!=0 else (8,)
+    xysplit = (b, a) if args.grate_tile and b>0 else (8,)
     split_list = SplitFeature(feature_padded, xysplit, (kCSPLIT,))
 
-    if args.simulate_sparsity:
-        sparsity_list = []
-        all_fmap_bits = 0
-        all_indicator_bits = 0
-        all_bitmap_bits = 0
+    if args.simulate_memory:
+        all_dram_bits = 0
+        all_bmap_bits = 0
+        all_sram_bits = 0
         for block_2D in split_list:  # len(split_list) = batch size * 8
-            bit_map, cache, indicator = Compress(block_2D)
+            cache, indicator, bit_map = Compress(block_2D)
+            num_dram_bits, num_bmap_bits, num_sram_bits = MemoryCalculator(cache, bit_map)
 
-            sparsitys, num_fmap_bits, num_indicator_bits, num_bitmap_bits = SparsityCalculator(bit_map, cache, indicator)
-
-            sparsity_list += sparsitys
-            all_fmap_bits += num_fmap_bits
-            all_indicator_bits += num_indicator_bits
-            all_bitmap_bits += num_bitmap_bits
-            # print(num_bitmap_bits)
-        # print(all_bitmap_bits)
-        # raise ValueError('Lets look')
-        return all_fmap_bits, all_indicator_bits, all_bitmap_bits, sparsity_list
+            all_dram_bits += num_dram_bits
+            all_bmap_bits += num_bmap_bits
+            all_sram_bits += num_sram_bits
+        return all_dram_bits, all_bmap_bits, all_sram_bits
     else:
         indicators = []
-        bit_maps = []
+        caches = []
         for block_2D in split_list:  # len(split_list) = batch size * 8
-            bit_map, cache, indicator = Compress(block_2D)
+            cache, indicator, bit_map = Compress(block_2D)
             indicators.append(indicator)
-            bit_maps.append(bit_map)
-        return bit_maps, cache, indicators
+            caches.append(cache)
+        return cache, indicators
 
 
 def main():
-    # kernel_stride_padding = [(5,1,2),(3,1,1),(3,1,1),(3,1,1)]
-    # h_list = [27,13,13,13]
-    # for idx in range(4):
-    #     print(ExtractTileParameter(kernel_stride_padding,idx,h_list[idx],h_list[idx]))
     print('===================================')
     print('Tiling = ', args.grate_tile)
-    print('Sparsity = ', args.simulate_sparsity)
+    print('Sparsity = ', args.simulate_memory)
     print('Network = ', args.model)
     print('Layer = ', args.layer)
     print('===================================')
 
     histogram_save_path = os.path.join('profile',args.model)
-    if args.simulate_sparsity and not os.path.isdir(histogram_save_path):
+    if args.simulate_memory and not os.path.isdir(histogram_save_path):
         os.system('mkdir -p %s' % histogram_save_path)
 
     dataset = myDataset(img_dir='/home/mediarti2/Dataset/Imagenet',
@@ -238,12 +212,18 @@ def main():
     net.eval()
 
     pbar = tqdm(total=len(dataloader),ncols=120)
-    sum_fmap_bits = 0.0
-    sum_indicator_bits = 0.0
-    sum_bitmap_bits = 0.0
-    sum_sparsity = []
-    cache_lines_data = 0
-    bmap_cache_lines = 0
+    cache_lines = {}
+    for ksp in kernel_stride_padding[args.layer]:
+        cache_lines[str(ksp)] = 0
+
+    sum_dram_bits = {}
+    sum_bmap_bits = {}
+    sum_sram_bits = {}
+    for ksp in kernel_stride_padding[args.layer]:
+        sum_dram_bits[str(ksp)] = 0
+        sum_bmap_bits[str(ksp)] = 0
+        sum_sram_bits[str(ksp)] = 0
+
     write = {}
     img_total = 0
     for img, _ in dataloader:
@@ -253,36 +233,38 @@ def main():
         features = net(img)  # kernel_stride_padding include kernel size, stride and padding
         feature = features[args.layer]
 
-        if args.simulate_sparsity:
-            all_fmap_bits, all_indicator_bits, all_bitmap_bits, sparsity_list = Integrate(feature, kernel_stride_padding, args.layer)
-            sum_fmap_bits += all_fmap_bits
-            sum_indicator_bits += all_indicator_bits
-            sum_bitmap_bits += all_bitmap_bits
-            sum_sparsity += sparsity_list
+        for ksp in kernel_stride_padding[args.layer]:
+            if args.simulate_memory:
+                all_dram_bits, all_bmap_bits, all_sram_bits = Integrate(feature, ksp, args.layer)
+                sum_dram_bits[str(ksp)] += all_dram_bits
+                sum_bmap_bits[str(ksp)] += all_bmap_bits
+                sum_sram_bits[str(ksp)] += all_sram_bits
 
-        else:
-            bit_maps, cache, indicators = Integrate(feature, kernel_stride_padding, args.layer)
-            # print(len(indicators), len(indicators[0]), len(indicators[0][0])) => 8 8 8
-            # print(len(bit_maps), len(bit_maps[0]), len(bit_maps[0][0])) => 8 8 8
-            fmap_temp, bmap_temp = AddressPatten2CacheLineNum(indicators, bit_maps, args.layer, feature.shape)
-            # print(bmap_temp)
-            cache_lines_data += fmap_temp
-            bmap_cache_lines += bmap_temp
-            write['Cache_lines_data'] = '{:.2f}'.format(cache_lines_data/img_total)
-            write['Cache_line_bm'] = '{:.2f}'.format(bmap_cache_lines/img_total)
-            pbar.set_postfix(write)
-
+            else:
+                feature = torch.nn.functional.interpolate(feature,scale_factor=(0.5,0.5)) if ksp == (1,2,0) else feature
+                cache, indicators = Integrate(feature, ksp, args.layer)
+                # print(len(indicators), len(indicators[0]), len(indicators[0][0])) => 8 8 8
+                # print(len(bit_maps), len(bit_maps[0]), len(bit_maps[0][0])) => 8 8 8
+                cache_line = AddressPatten2CacheLineNum(indicators, feature.shape, ksp)
+                cache_lines[str(ksp)] += cache_line
+                write['cache_lines '+str(ksp)] = '{:.2f}'.format(cache_lines[str(ksp)]/img_total)
+        pbar.set_postfix(write)
         pbar.update()
+
+        if img_total == 1000:
+            break
     pbar.close()
-    if args.simulate_sparsity:
-        print('Average data bits :', int(sum_fmap_bits/len(dataset)),'Average idx bits :', int(sum_indicator_bits/len(dataset)),'Average bmap bits :', int(sum_bitmap_bits/len(dataset))  )
-        hist = np.histogram([i for i in sum_sparsity if i < 1], bins=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
-        plt.xticks(np.arange(10),( '<0.1', '<0.2', '<0.3', '<0.4', '<0.5', '<0.6', '<0.7', '<0.8', '<0.9', '<1'))
-        plt.bar(np.arange(10), hist[0])  # arguments are passed to np.histogram
-        plt.savefig(os.path.join(histogram_save_path, 'sparsity_ft%d_%s.jpg'%(args.layer,args.grate_tile)))
-        np.save(os.path.join(histogram_save_path, 'sparsity_ft%d_%s.npy'%(args.layer,args.grate_tile)),hist)
+    if args.simulate_memory:
+        for ksp in kernel_stride_padding[args.layer]:
+            print('kernel size: %d, stride: %d, padding: %d'%(ksp[0], ksp[1], ksp[2]))
+            print('Dram_bits: {:.2f}'.format(sum_dram_bits[str(ksp)]/img_total))
+            print('Sram_bits: {:.2f}'.format(sum_sram_bits[str(ksp)]/img_total))
+            print('Bmap bits: {:.2f}'.format(sum_bmap_bits[str(ksp)]/img_total))  #compressed data bits = dram bits - bmap bits
+
     else:
-        print('Cache_line_data: ', cache_lines_data/len(dataset), 'Cache_line_bm: ', bmap_cache_lines/len(dataset))
+        for ksp in kernel_stride_padding[args.layer]:
+            print('kernel size: %d, stride: %d, padding: %d'%(ksp[0], ksp[1], ksp[2]))
+            print('Cache_lines: {:.2f}'.format(cache_lines[str(ksp)]/img_total))
 
 
 if __name__ == '__main__':

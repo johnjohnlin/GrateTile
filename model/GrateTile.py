@@ -47,7 +47,7 @@ class FetchCalculator(object):
         [[T]
          [T]]: all block
         [[T]
-         [F]]: up block 
+         [F]]: up block
         [[F]
          [T]]: down block
         '''
@@ -145,31 +145,26 @@ class FetchCalculator(object):
             boolean_masks[i] = mask.flat
         return block_ids, boolean_masks
 
-class CacheLineCalculator(object): 
-    def __init__(self, indicators, bit_maps, xsplit, ysplit):
+class CacheLineCalculator(object):
+    def __init__(self, indicators, xsplit, ysplit):
         # assume the block size is 8*8
         self.indicators = indicators
-        self.bit_maps = bit_maps
         self.num_xsplit = len(xsplit)
         self.num_ysplit = len(ysplit)
 
     def Fetch(self, block_ids, boolean_mask):
         num_cache_line = 0
-        num_cache_line_bmap = 0
-        
+
         for i,(index_x,index_y,index_c) in enumerate(block_ids):  # block_ids shape([num_block,3])
-            
+
             index_x *= self.num_xsplit
-            index_y *= self.num_ysplit            
+            index_y *= self.num_ysplit
 
             subtile_ids_mgrid = np.mgrid[index_y:index_y+self.num_ysplit, index_x:index_x+self.num_xsplit]
             subtile_ids = np.column_stack([b.flat for b in subtile_ids_mgrid]).astype('i4')  # shape([num_xsplit*num_ysplit, 2])
-            
+
             mask = boolean_mask[i]  # shape([num_xsplit*num_ysplit,])
             for j, (idy, idx) in enumerate(subtile_ids):
-                num_cache_line += (self.indicators[index_c][idy][idx] - 1) // 8 + 1 if mask[j] else 0
-                num_cache_line += 1 if mask[j] and self.indicators[index_c][idy][idx] == 0 else 0
+                num_cache_line += self.indicators[index_c][idy][idx] if mask[j] else 0
 
-            num_cache_line_bmap += 4
-
-        return num_cache_line, num_cache_line_bmap
+        return num_cache_line
