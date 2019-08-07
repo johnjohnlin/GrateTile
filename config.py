@@ -1,6 +1,7 @@
 from network.alexnet import alexnet
 from network.vgg import *
 from network.resnet import *
+from network.vdsr import *
 from torchvision import transforms
 import pickle
 
@@ -76,7 +77,10 @@ resnet152_config = dict(
     net = resnet152(pretrained=True)
 )
 
-
+vdsr_config = dict(
+    kernel_stride_padding = [[(3,1,1)]]*19,
+    net = vdsr(pretrained=False)
+)
 
 
 def NetConfig(net='alexnet'):
@@ -100,6 +104,8 @@ def NetConfig(net='alexnet'):
         return resnet101_config
     elif net == 'resnet152':
         return resnet152_config
+    elif net == 'vdsr':
+        return vdsr_config
 
 if __name__ == '__main__':
     print(resnet18_config['kernel_stride_padding'])
