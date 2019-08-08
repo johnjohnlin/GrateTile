@@ -24,8 +24,8 @@ class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
         self.residual_layer = self.make_layer(Conv_ReLU_Block, 18)
-        self.input = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.output = nn.Conv2d(in_channels=64, out_channels=3, kernel_size=3, stride=1, padding=1, bias=False)
+        self.input = nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
+        # self.output = nn.Conv2d(in_channels=64, out_channels=1, kernel_size=3, stride=1, padding=1, bias=False)
         self.relu = nn.ReLU(inplace=True)
 
         for m in self.modules():
@@ -52,17 +52,13 @@ class Net(nn.Module):
         return fmap
 
 
-def vdsr(pretrained):
+def vdsr(path, pretrained=False):
     model = Net()
     if pretrained:
-        model = torch.load('./network/model_epoch_50.pth', map_location=lambda storage, loc: storage, pickle_module=pickle)["model"]
-        #model.load_state_dict(torch.load('./model_epoch_50.pth')['model'])
+        model.load_state_dict(torch.load(path))
+
     return model
 
+
 if __name__ == '__main__':
-    net = vdsr(pretrained=True)
-    #net.eval()
-    fmap = net(torch.rand((1,3,224,224)))
-    print(fmap.shape)
-    # for map in fmap:
-    #     print(map.permute(0,2,3,1).shape)
+    net = vdsr(path='./vdsr.pth', pretrained=True)

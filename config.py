@@ -79,7 +79,7 @@ resnet152_config = dict(
 
 vdsr_config = dict(
     kernel_stride_padding = [[(3,1,1)]]*19,
-    net = vdsr(pretrained=False)
+    net = vdsr(path='./network/vdsr.pth', pretrained=True)
 )
 
 
