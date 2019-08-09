@@ -2,5 +2,11 @@ __pycache__/*
 model/__pycache__/*
 network/__pycache__/*
 config/__pycache__/*
-bash_test.sh
 profile/*
+network/model_epoch_50.pth
+test.py
+vdsr.sh
+script.sh
+network/__init__.py
+Untitled.ipynb
+.ipynb_checkpoints/

@@ -1,10 +1,6 @@
 import torch
 import torch.nn as nn
 from math import sqrt
-from functools import partial
-import pickle
-pickle.load = partial(pickle.load, encoding="latin1")
-pickle.Unpickler = partial(pickle.Unpickler, encoding="latin1")
 
 global feature_maps
 feature_maps = list()

@@ -58,6 +58,9 @@ def AddressPatten2CacheLineNum(indicators, hwc, ksp):
     wsplit, w_pad, fetch_size_w = ExtractTileParameter(ksp, w, output_size[0])
     hsplit, h_pad, fetch_size_h = ExtractTileParameter(ksp, h, output_size[1])
 
+    if fetch_size_w*fetch_size_h*csplit[0] > 10000:
+        print('Warning: Fetch size is too large')
+
     fc = FetchCalculator(wsplit, hsplit, csplit)
     clc = CacheLineCalculator(indicators, wsplit, hsplit, csplit)
 
@@ -187,6 +190,7 @@ def MemoryCalculator(cache, bit_map, block):
         for j in range(w):
             num_dram_bits += cache[i][j].shape[0]*16
             num_bmap_bits += bit_map[i][j]*16
+            
             if args.dense:
                 num_sram_bits += 32 # 32 bits pointer
             else:
@@ -195,10 +199,7 @@ def MemoryCalculator(cache, bit_map, block):
                 #######################################
                 num_sram_bits_temp = (block[i][j].reshape(-1).shape[0]-1)//8+1
                 num_sram_bits += 8 if args.mode == "uniform"  else (math.log(num_sram_bits_temp, 2)-1)//1+1 # indicator bits
-            # if args.mode == 'non_uniform':
-            #     num_sram_bits += 16/4 # 16 indicator ::: 4 tile for 16bit
-            # else:
-            #     num_sram_bits += 8 #  6 indicator
+
     return num_dram_bits, num_bmap_bits, num_sram_bits
 
 def Integrate(feature, ksp, idx):

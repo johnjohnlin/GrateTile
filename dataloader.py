@@ -8,7 +8,8 @@ import torch
 import torch.utils.data as Data
 from PIL import Image
 class myDataset(Dataset):
-    def __init__(self, img_dir='/home/mediarti2/Dataset/Imagenet', train=False, transform=None):
+    def __init__(self, img_dir='/home/mediarti2/Dataset/Imagenet', data_type='RGB', train=False, transform=None):
+        self.data_type = data_type
         self.train = train
         self.img_dir = img_dir
         self.transform = transform
@@ -32,8 +33,8 @@ class myDataset(Dataset):
     def __len__(self):
         return len(self.filename_list)
     def __getitem__(self, idx):
-
-        img = Image.open(self.filename_list[idx]).convert('RGB')
+        
+        img = Image.open(self.filename_list[idx]).convert(self.data_type)
         #img = cv2.imread(self.filename_list[idx])[::-1]
         img = self.transform(img)
         label = self.label[idx]
